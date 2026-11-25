@@ -1,0 +1,15 @@
+orig/
+build/
+README_local
+apk/out/
+test/out/
+re/
+*.bmp
+apk/android/app/src/debug/res/
+apk/android/app/src/main/jniLibs/
+apk/sdl/libSDL2.so
+*.apk
+__pycache__/
+tools/__pycache__/
+cc_save.txt
+docs/README.md

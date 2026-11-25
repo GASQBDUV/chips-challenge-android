@@ -1,0 +1,5 @@
+Third-party components
+
+ymfm (third_party/ymfm) - BSD 3-Clause, Copyright (c) 2021 Aaron Giles. See third_party/ymfm/LICENSE.
+SDL2 headers (apk/sdl/include) - zlib license, Copyright (c) 1997-2025 Sam Lantinga.
+Chip's Challenge and its game files are NOT included and belong to their respective owners.
