@@ -3,8 +3,9 @@ package com.chips.port;
 import org.libsdl.app.SDLActivity;
 import java.io.File;
 
-/** SDL game activity. The second display (if any) shows a Presentation with the full-level minimap, fed by nativeState(). */
+/** SDL game activity. The second display (if any) shows a Presentation with the engine-rendered level panel (nativePanel()); music control still uses nativeState(). */
 public class ChipsActivity extends SDLActivity {
+    static native int nativePanel(int[] out);     // second-screen picture (640x480 ARGB) rendered by the engine
     static native int nativeState(byte[] out);   // implemented in libmain.so (src/cc_sdl_main.c)
     static native void nativeMusicStatus(int ok); // tells the engine whether Android MIDI playback works (0 -> engine falls back to FM)
 
@@ -54,7 +55,7 @@ public class ChipsActivity extends SDLActivity {
         android.view.Display[] ds = dm.getDisplays(android.hardware.display.DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
         if (ds.length == 0) { android.util.Log.i("ChipsPort", "panel: no second display"); return; }
         panel = new android.app.Presentation(this, ds[0]);
-        panel.setContentView(new MapView(this));
+        panel.setContentView(new PanelView(this));
         panel.getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE);
         panel.show();
         android.util.Log.i("ChipsPort", "panel shown on display " + ds[0].getDisplayId());

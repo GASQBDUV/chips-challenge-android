@@ -53,6 +53,23 @@ static int text_wrap(App *a, int x, int y, int maxw, const char *s, uint32_t col
     return y;
 }
 
+/* word wrap that stops (with an ellipsis) instead of running past maxy */
+static int text_wrap_h(App *a, int x, int y, int maxw, int maxy, const char *s, uint32_t col) {
+    char line[200] = ""; int n = 0; const char *p = s;
+    while (*p) {
+        const char *e = p; while (*e && *e != ' ') e++;
+        char word[100]; int wl = (int)(e - p); if (wl > 99) wl = 99; memcpy(word, p, wl); word[wl] = 0;
+        char t[300]; snprintf(t, sizeof t, "%s%s%s", line, n ? " " : "", word);
+        if (n && text_w(t) > maxw) {
+            if (y + FONT_H > maxy) { text(a, x, y - FONT_H - 1, "...", col); return y; }
+            text(a, x, y, line, col); y += FONT_H + 1; snprintf(line, sizeof line, "%s", word); n = (int)strlen(line);
+        } else { snprintf(line, sizeof line, "%s", t); n = (int)strlen(line); }
+        p = e; while (*p == ' ') p++;
+    }
+    if (n && y + FONT_H <= maxy) { text(a, x, y, line, col); y += FONT_H + 1; }
+    return y;
+}
+
 /* ------------------------------------------------------------ tiles */
 static void tile(App *a, int col, int row, int dx, int dy, int keyed) { blit(a, &a->art.tiles, col * 32, row * 32, 32, 32, dx, dy, keyed); }
 static void sprite(App *a, int col, int row, int dx, int dy) { tile(a, col + 3, row, dx, dy, 1); }
@@ -112,22 +129,26 @@ static void box(App *a, int x, int y, int w, int h) {
 static const char *DEATHMSG[] = { "", "Ooops! Don't step in the fire without fire boots!", "Ooops! Chip can't swim without flippers!",
     "Ooops! Don't touch the bombs!", "Ooops! Watch out for moving blocks!", "Ooops! Look out for creatures!", "Ooops! Out of time!" };
 
+static int touch_visible(const App *a) { return a->touch_mode == 1 || (a->touch_mode == 2 && !a->hw_seen); }
+
 static void draw_touch(App *a) {
     uint32_t col = 0xFF9090A0u;
     /* d-pad */
     int cx = 45, cy = 235;
     fill(a, cx - 14, cy - 44, 28, 88, 0xFF304050u); fill(a, cx - 44, cy - 14, 88, 28, 0xFF304050u);
     text_c(a, cx, cy - 42, "^", col); text_c(a, cx, cy + 28, "v", col); text(a, cx - 40, cy - 8, "<", col); text(a, cx + 34, cy - 8, ">", col);
-    struct { int x, y; const char *s; } b[] = { {596, 250, "A"}, {560, 280, "B"}, {20, 40, "L"}, {590, 40, "R"}, {590, 100, "Menu"} };
-    for (int i = 0; i < 5; i++) {
-        int w = i == 4 ? 44 : 34;
-        fill(a, b[i].x - 17 + (i == 4 ? -5 : 0), b[i].y - 16 + (i == 4 ? 4 : 0), w, 32, 0xFF304050u);
-        text_c(a, b[i].x + (i == 4 ? 0 : 0), b[i].y - 8 + (i == 4 ? 4 : 0), b[i].s, col);
+    struct { int x, y; const char *s; } b[] = { {596, 250, "A"}, {560, 280, "B"}, {20, 40, "L"}, {590, 40, "R"}, {590, 100, "Menu"}, {34, 100, "Restart"} };
+    for (int i = 0; i < 6; i++) {
+        int w = i == 4 ? 44 : i == 5 ? 58 : 34;
+        fill(a, b[i].x - 17 + (i == 4 ? -5 : 0), b[i].y - 16 + (i >= 4 ? 4 : 0), w, 32, 0xFF304050u);
+        text_c(a, b[i].x + (i == 5 ? 12 : 0), b[i].y - 8 + (i >= 4 ? 4 : 0), b[i].s, col);
     }
 }
 
-uint32_t app_touch_mask(float lx, float ly) {
+uint32_t app_touch_mask(const App *a, float lx, float ly) {
     uint32_t m = 0;
+    if (!touch_visible(a)) { if (lx > 560 && ly > 88 && ly < 130) m |= B_START; return m; }   /* hidden: only the (invisible) menu corner stays active */
+    if (lx < 70 && ly > 88 && ly < 130) m |= B_RESTART;
     float dx = lx - 45, dy = ly - 235;
     if (dx * dx + dy * dy < 60 * 60 && dx * dx + dy * dy > 6 * 6) {
         float ax = dx < 0 ? -dx : dx, ay = dy < 0 ? -dy : dy;
@@ -174,11 +195,11 @@ void app_render(App *a) {
         tile(a, 0, 0, PX + 13 + i * 32, PY + 258, 0);
         if (g->boots[i]) sprite(a, 6, 8 + i, PX + 13 + i * 32, PY + 258);
     }
-    /* hint overlay in panel */
-    if ((game_on_hint(g) || a->show_hint) && L->hint[0] && a->mode == M_PLAY) {
-        box(a, PX + 2, PY + 70, 150, 156);
-        text(a, PX + 8, PY + 76, "HINT", 0xFFA00000u);
-        text_wrap(a, PX + 8, PY + 94, 138, L->hint, C_BLACK);
+    /* hint banner over the bottom of the map view (the TIME / CHIPS counters stay visible); shown on the hint tile or for a few seconds after A */
+    if ((game_on_hint(g) || a->show_hint > 0) && L->hint[0] && a->mode == M_PLAY) {
+        box(a, VX + 4, VY + 288 - 84, 280, 80);
+        text(a, VX + 10, VY + 288 - 80, "HINT", 0xFFA00000u);
+        text_wrap_h(a, VX + 10, VY + 288 - 64, 268, VY + 288 - 6, L->hint, C_BLACK);
     }
     /* status line under viewport */
     { char s[100]; snprintf(s, sizeof s, "%s", L->title); text_c(a, VX + 144, VY + 292, s, C_WHITE); }
@@ -206,26 +227,90 @@ void app_render(App *a) {
     } else if (a->mode == M_MENU) {
         box(a, VX + 4, VY + 8, 280, 272);
         text_c(a, VX + 144, VY + 14, "MENU", 0xFF000080u);
-        char s[100]; const char *it[8];
+        char s[100]; const char *it[9];
         char lv[80]; snprintf(lv, sizeof lv, "< Level %d: %s >", a->dat.lev[a->menu_level].num, a->dat.lev[a->menu_level].title);
         char pw[24]; snprintf(pw, sizeof pw, "Password: [%c%c%c%c] (%d/4)", a->pass_in[0], a->pass_in[1], a->pass_in[2], a->pass_in[3], a->pass_cur + 1);
         it[0] = "Resume"; it[1] = "Restart level"; it[2] = lv; it[3] = "Go to selected level"; it[4] = pw;
-        it[5] = a->sound_on ? "Sound: on" : "Sound: off"; it[6] = a->music_mode == 1 ? "Music: FM (OPL3)" : a->music_mode == 2 ? "Music: Android MIDI" : "Music: Off"; it[7] = "Quit";
-        for (int i = 0; i < 8; i++) {
-            if (i == a->menu_sel) fill(a, VX + 12, VY + 36 + i * 24, 264, 20, 0xFF000080u);
-            text_c(a, VX + 144, VY + 38 + i * 24, it[i], i == a->menu_sel ? C_WHITE : C_BLACK);
+        it[5] = a->sound_on ? "Sound: on" : "Sound: off"; it[6] = a->music_mode == 1 ? "Music: FM (OPL3)" : a->music_mode == 2 ? "Music: Android MIDI" : "Music: Off";
+        it[7] = a->touch_mode == 1 ? "Touch controls: On" : a->touch_mode == 0 ? "Touch controls: Off" : "Touch controls: Auto"; it[8] = "Quit";
+        for (int i = 0; i < 9; i++) {
+            if (i == a->menu_sel) fill(a, VX + 12, VY + 32 + i * 21, 264, 19, 0xFF000080u);
+            text_c(a, VX + 144, VY + 33 + i * 21, it[i], i == a->menu_sel ? C_WHITE : C_BLACK);
         }
-        snprintf(s, sizeof s, "Unlocked up to level %d", a->dat.lev[a->top_idx].num); text_c(a, VX + 144, VY + 232, s, 0xFF404040u);
-        text_c(a, VX + 144, VY + 250, a->menu_msg, 0xFF800000u);
+        snprintf(s, sizeof s, "Unlocked up to level %d", a->dat.lev[a->top_idx].num); text_c(a, VX + 144, VY + 234, s, 0xFF404040u);
+        text_c(a, VX + 144, VY + 252, a->menu_msg, 0xFF800000u);
     }
-    draw_touch(a);
+    if (touch_visible(a)) draw_touch(a);
+}
+
+/* ------------------------------------------------------------ second-screen panel */
+/* a level cell drawn with the real tile art, box-filtered down to sz x sz */
+static void cell_scaled(App *a, int cx, int cy, int dx, int dy, int sz) {
+    static uint32_t tmp[32 * 32];
+    uint32_t *sfb = g_fb; int sw = g_w, sh = g_h;
+    g_fb = tmp; g_w = g_h = 32; memset(tmp, 0, sizeof tmp);
+    draw_cell(a, cx, cy, 0, 0);
+    g_fb = sfb; g_w = sw; g_h = sh;
+    for (int y = 0; y < sz; y++) for (int x = 0; x < sz; x++) {
+        int x0 = x * 32 / sz, x1 = (x + 1) * 32 / sz, y0 = y * 32 / sz, y1 = (y + 1) * 32 / sz; if (x1 <= x0) x1 = x0 + 1; if (y1 <= y0) y1 = y0 + 1;
+        unsigned r = 0, gg = 0, b = 0, n = 0;
+        for (int j = y0; j < y1; j++) for (int i = x0; i < x1; i++) { uint32_t c = tmp[j * 32 + i]; r += c >> 16 & 255; gg += c >> 8 & 255; b += c & 255; n++; }
+        px_put(a, dx + x, dy + y, 0xFF000000u | (r / n) << 16 | (gg / n) << 8 | (b / n));
+    }
+}
+
+void app_render_panel(App *a) {
+    Game *g = &a->g; const Level *L = g->lev; char s[160];
+    g_fb = a->pfb; g_w = PAN_W; g_h = PAN_H;
+    for (int y = 0; y < PAN_H; y++) for (int x = 0; x < PAN_W; x++) {
+        uint32_t c = a->art.circuit.px[(y % a->art.circuit.h) * a->art.circuit.w + (x % a->art.circuit.w)];
+        a->pfb[y * PAN_W + x] = 0xFF000000u | (((c >> 16 & 255) / 2) << 16) | (((c >> 8 & 255) / 2) << 8) | ((c & 255) / 2);
+    }
+    /* title strip (shortened to fit above the map) */
+    snprintf(s, sizeof s, "Level %d - %s", L->num, L->title);
+    while (text_w(s) > 448 && strlen(s) > 4) s[strlen(s) - 1] = 0;
+    text(a, 8, 5, s, C_WHITE);
+    /* the whole level with the real tiles, 14 px per cell */
+    const int MX = 8, MY = 26, CS = 14;
+    fill(a, MX - 2, MY - 2, 32 * CS + 4, 32 * CS + 4, 0xFF000000u);
+    for (int j = 0; j < 32; j++) for (int i = 0; i < 32; i++) cell_scaled(a, i, j, MX + i * CS, MY + j * CS, CS);
+    int vx = g->chipx - 4, vy = g->chipy - 4;      /* the 9x9 window shown on the main screen */
+    if (vx < 0) vx = 0; if (vx > 23) vx = 23; if (vy < 0) vy = 0; if (vy > 23) vy = 23;
+    { int x = MX + vx * CS, y = MY + vy * CS, w = 9 * CS; uint32_t c = 0xFFFFFF40u; fill(a, x, y, w, 2, c); fill(a, x, y + w - 2, w, 2, c); fill(a, x, y, 2, w, c); fill(a, x + w - 2, y, 2, w, c); }
+    /* the real side panel with live counters */
+    const int QX = 472, QY = 8;
+    blit(a, &a->art.panel, 0, 0, a->art.panel.w, a->art.panel.h, QX, QY, 0);
+    digits(a, QX + 46, QY + 37, L->num, 3, 0);
+    digits(a, QX + 46, QY + 99, game_seconds_left(g), 3, g->notime ? 0 : (game_seconds_left(g) <= 15));
+    digits(a, QX + 46, QY + 189, game_chips_left(g), 3, game_chips_left(g) == 0);
+    for (int i = 0; i < 4; i++) {
+        int x = QX + 13 + i * 32;
+        tile(a, 0, 0, x, QY + 226, 0); if (g->keys[i] > 0) { sprite(a, 6, 4 + i, x, QY + 226); if (g->keys[i] > 1) { snprintf(s, sizeof s, "%d", g->keys[i]); text(a, x + 22, QY + 226 + 17, s, C_BLACK); } }
+        tile(a, 0, 0, x, QY + 258, 0); if (g->boots[i]) sprite(a, 6, 8 + i, x, QY + 258);
+    }
+    /* info box under the panel: result / hint / title, never running outside the box */
+    const int BX = 468, BY = 314, BW = 160, BH = 158;
+    box(a, BX, BY, BW, BH);
+    int ty = BY + 6, maxy = BY + BH - 22;
+    if (a->mode == M_DEAD) {
+        const char *m = DEATHMSG[g->death]; if (!strncmp(m, "Ooops! ", 7)) m += 7;
+        text(a, BX + 6, ty, "OOPS!", 0xFFA00000u); text_wrap_h(a, BX + 6, ty + 20, BW - 12, maxy, m, C_BLACK);
+    } else if (a->mode == M_WON) {
+        text(a, BX + 6, ty, "COMPLETE!", 0xFF006000u); snprintf(s, sizeof s, "Score %d", a->score); text(a, BX + 6, ty + 20, s, 0xFF000080u);
+        snprintf(s, sizeof s, "Bonus %d + time %d", a->last_bonus, g->notime ? 0 : game_seconds_left(g) * 10); text_wrap_h(a, BX + 6, ty + 38, BW - 12, maxy, s, C_BLACK);
+    } else if (L->hint[0]) {
+        text(a, BX + 6, ty, "HINT", 0xFFA00000u); text_wrap_h(a, BX + 6, ty + 20, BW - 12, maxy, L->hint, C_BLACK);
+    } else {
+        text(a, BX + 6, ty, "LEVEL", 0xFF000080u); text_wrap_h(a, BX + 6, ty + 20, BW - 12, maxy, L->title, C_BLACK);
+    }
+    snprintf(s, sizeof s, "Password %s", L->pass); text(a, BX + 6, BY + BH - 19, s, 0xFF404040u);
 }
 
 /* ------------------------------------------------------------ save / flow */
 void app_save(const App *a) {
     if (!a->save_path[0]) return;
     FILE *f = fopen(a->save_path, "w"); if (!f) return;
-    fprintf(f, "top %d\nscore %d\nsound %d\nmusicmode %d\n", a->top_idx, a->score, a->sound_on, a->music_mode);
+    fprintf(f, "top %d\nscore %d\nsound %d\nmusicmode %d\ntouch %d\n", a->top_idx, a->score, a->sound_on, a->music_mode, a->touch_mode);
     for (int i = 0; i < a->dat.n; i++) if (a->best_time[i]) fprintf(f, "b %d %d %d\n", i, a->best_time[i], a->best_score[i]);
     fclose(f);
 }
@@ -238,6 +323,7 @@ static void app_load_save(App *a) {
         else if (!strcmp(k, "sound") && fscanf(f, "%d", &x) == 1) a->sound_on = x;
         else if (!strcmp(k, "music") && fscanf(f, "%d", &x) == 1) a->music_mode = x ? 1 : 0;
         else if (!strcmp(k, "musicmode") && fscanf(f, "%d", &x) == 1) a->music_mode = (x >= 0 && x <= 2) ? x : 1;
+        else if (!strcmp(k, "touch") && fscanf(f, "%d", &x) == 1) a->touch_mode = (x >= 0 && x <= 2) ? x : 2;
         else if (!strcmp(k, "b") && fscanf(f, "%d %d %d", &x, &y, &z) == 3) { if (x >= 0 && x < a->dat.n) { a->best_time[x] = y; a->best_score[x] = z; } }
         else break;
     }
@@ -250,7 +336,7 @@ int app_init(App *a, const char *dir, const char *savepath) {
     snprintf(p, sizeof p, "%s/CHIPS.DAT", dir); if (dat_load(&a->dat, p)) { snprintf(p, sizeof p, "%s/chips.dat", dir); if (dat_load(&a->dat, p)) return -1; }
     snprintf(p, sizeof p, "%s/CHIPS.EXE", dir); if (art_load(&a->art, p)) { snprintf(p, sizeof p, "%s/chips.exe", dir); if (art_load(&a->art, p)) return -2; }
     snprintf(a->save_path, sizeof a->save_path, "%s", savepath ? savepath : "");
-    a->sound_on = 1; a->music_mode = 1; a->level_idx_prev = -1; strcpy(a->pass_in, "AAAA");
+    a->sound_on = 1; a->music_mode = 1; a->touch_mode = 2; a->level_idx_prev = -1; strcpy(a->pass_in, "AAAA");
     app_load_save(a);
     app_start_level(a, a->top_idx);
     return 0;
@@ -278,8 +364,8 @@ static int dirs_from(uint32_t h, uint32_t pressed, int *last) {
 static void snd(App *a, int id) { if (a->sound_on) a->snd_mask |= 1u << id; }
 
 static void menu_step(App *a, uint32_t pr) {
-    if (pr & B_UP) a->menu_sel = (a->menu_sel + 7) % 8;
-    if (pr & B_DOWN) a->menu_sel = (a->menu_sel + 1) % 8;
+    if (pr & B_UP) a->menu_sel = (a->menu_sel + 8) % 9;
+    if (pr & B_DOWN) a->menu_sel = (a->menu_sel + 1) % 9;
     int mx = a->dat.n;
     if (a->menu_sel == 2) {
         if (pr & B_LEFT) a->menu_level = (a->menu_level + a->top_idx) % (a->top_idx + 1);
@@ -290,6 +376,10 @@ static void menu_step(App *a, uint32_t pr) {
     if (a->menu_sel == 6) {
         if (pr & B_LEFT) { a->music_mode = (a->music_mode + 2) % 3; app_save(a); }
         if (pr & B_RIGHT) { a->music_mode = (a->music_mode + 1) % 3; app_save(a); }
+    }
+    if (a->menu_sel == 7) {
+        if (pr & B_LEFT) { a->touch_mode = (a->touch_mode + 2) % 3; a->hw_seen = 0; app_save(a); }
+        if (pr & B_RIGHT) { a->touch_mode = (a->touch_mode + 1) % 3; a->hw_seen = 0; app_save(a); }
     }
     if (a->menu_sel == 4) {
         char *c = &a->pass_in[a->pass_cur];
@@ -315,7 +405,8 @@ static void menu_step(App *a, uint32_t pr) {
             break;
         case 5: a->sound_on = !a->sound_on; app_save(a); break;
         case 6: a->music_mode = (a->music_mode + 1) % 3; app_save(a); break;
-        case 7: a->want_quit = 1; break;
+        case 7: a->touch_mode = (a->touch_mode + 1) % 3; a->hw_seen = 0; app_save(a); break;
+        case 8: a->want_quit = 1; break;
         }
     }
 }
@@ -328,13 +419,15 @@ void app_step(App *a, uint32_t held) {
     Game *g = &a->g;
     if (a->mode == M_MENU) { menu_step(a, pr); return; }
     if (pr & B_START) { a->mode = M_MENU; a->menu_sel = 0; a->menu_level = a->level_idx; a->menu_msg[0] = 0; return; }
+    if (pr & B_RESTART) { app_start_level(a, a->level_idx); return; }      /* quick restart (touch button / gamepad Select / R key) */
     if (pr & B_L) { if (a->level_idx > 0) app_start_level(a, a->level_idx - 1); return; }
     if (pr & B_R) { if (a->level_idx < a->top_idx) app_start_level(a, a->level_idx + 1); return; }
     switch (a->mode) {
     case M_INTRO: if (d >= 0 || (pr & B_A)) a->mode = M_PLAY; else break; /* fallthrough */
     case M_PLAY:
         if (pr & B_B) { app_start_level(a, a->level_idx); return; }
-        if (pr & B_A) a->show_hint = !a->show_hint;
+        if (pr & B_A) a->show_hint = a->show_hint > 0 ? 0 : 90;
+        if (a->show_hint > 0) a->show_hint--;
         g->events = 0;
         if (d >= 0) game_input(g, d);          /* key-down semantics: one request per tick while held (B/C gating inside) */
         game_tick(g); a->gtick = g->tick;

@@ -31,6 +31,10 @@ int main(int argc, char **argv) {
         case '.': break; case 'w': ticks = 9; break; case 'z': ticks = 1; break;
         case 'a': m = B_A; ticks = 1; break; case 'b': m = B_B; ticks = 1; break; case 's': m = B_START; ticks = 1; break;
         case '@': dump(&a, argv[2], n++); continue;
+        case 'P': { app_render_panel(&a); char p[600]; snprintf(p, sizeof p, "%s_pan%02d.bmp", argv[2], n++); FILE *f = fopen(p, "wb");
+            int w = PAN_W, h = PAN_H; unsigned char b[54] = {'B','M'}; unsigned sz = 54 + w * h * 4, off = 54, hs = 40; memcpy(b + 2, &sz, 4); memcpy(b + 10, &off, 4); memcpy(b + 14, &hs, 4); memcpy(b + 18, &w, 4); memcpy(b + 22, &h, 4); b[26] = 1; b[28] = 32;
+            fwrite(b, 1, 54, f); for (int y = h - 1; y >= 0; y--) fwrite(a.pfb + y * w, 4, w, f); fclose(f); } continue;
+        case 'T': a.touch_mode = 1; continue; case 't': a.touch_mode = 0; continue;
         case 'M': { static uint32_t big[1024 * 1024]; app_render_full(&a, big); char p[600]; snprintf(p, sizeof p, "%s_map.bmp", argv[2]); FILE *f = fopen(p, "wb");
             int w = 1024, h = 1024; unsigned char b[54] = {'B','M'}; unsigned sz = 54 + w * h * 4, off = 54, hs = 40; memcpy(b + 2, &sz, 4); memcpy(b + 10, &off, 4); memcpy(b + 14, &hs, 4); memcpy(b + 18, &w, 4); memcpy(b + 22, &h, 4); b[26] = 1; b[28] = 32;
             fwrite(b, 1, 54, f); for (int y = h - 1; y >= 0; y--) fwrite(big + y * w, 4, w, f); fclose(f); } continue;
